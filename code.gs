@@ -3,8 +3,8 @@
  *
  * This script sends a daily email with a "YES" button.
  * If the button is clicked, it records the click.
- * If 7 days pass with no click, it sends an alert email with a PDF attachment
- * to a secondary email address.
+ * If X days pass with no click, it sends an alert email with a PDF attachment.
+ * After Y days of no clicks, the primary check-in email stops sending.
  */
 
 // --- (1) CONFIGURE YOUR SCRIPT HERE ---
@@ -20,6 +20,14 @@ const PRIMARY_SUBJECT = "Daily Check-in: Are you okay?";
 
 // The subject line for the 7-day alert email.
 const SECONDARY_SUBJECT = "ALERT: No response from Mahesh for last 7 days";
+
+// NUMBER OF DAYS SETTINGS
+// -----------------------
+// How many days of silence before sending the alert to the secondary email?
+const ALERT_THRESHOLD_DAYS = <ENTER DESIRED INTEGER VALUE>; 
+
+// How many days of silence before stopping the daily check-in emails entirely?
+const STOP_EMAILS_THRESHOLD_DAYS = <ENTER DESIRED INTEGER VALUE>;
 
 // The HTML body for the 7-day alert email.
 // We use <p> tags for paragraphs, which create clean line breaks.
