@@ -53,19 +53,16 @@ const PDF_FILE_ID = "<FILE_ID>";
 const scriptProperties = PropertiesService.getScriptProperties();
 
 /**
- * This is the Web App function. It runs when the "YES" button is clicked.
- * It records the click time and shows a confirmation message.
- * It also resets the 'alertSent' flag.
+ * Web App function: Runs when "YES" is clicked.
  */
 function doGet(e) {
   try {
     const now = new Date().toISOString();
     scriptProperties.setProperty('lastClickDate', now);
-    scriptProperties.setProperty('alertSent', 'false'); // Reset the alert flag
+    scriptProperties.setProperty('alertSent', 'false');
 
     Logger.log("--- 'YES' button clicked. Timestamp recorded: " + now);
 
-    // Return a user-friendly confirmation message
     return HtmlService.createHtmlOutput(
       "<div style='font-family: Arial, sans-serif; padding: 30px; text-align: center;'>" +
       "<h1 style='color: #4CAF50;'>Thank You!</h1>" +
@@ -75,49 +72,68 @@ function doGet(e) {
     );
   } catch (error) {
     Logger.log("--- ERROR in doGet: " + error.message);
-    return HtmlService.createHtmlOutput(
-      "<div style='font-family: Arial, sans-serif; padding: 30px; text-align: center;'>" +
-      "<h1 style='color: #D32F2F;'>Error</h1>" +
-      "<p style='font-size: 1.2em;'>Sorry, there was an error recording your click.</p>" +
-      "<p>Please try again. If the problem persists, check the script logs.</p>" +
-      "</div>"
-    );
+    return HtmlService.createHtmlOutput("<p>Error recording click.</p>");
   }
 }
 
 /**
- * Sends the daily check-in email with the "YES" button.
- * This function should be run on a daily time-based trigger.
+ * Helper function to determine the "Reference Date".
+ * Returns the Last Click Date. If no click exists, returns the Script Start Date.
+ */
+function getReferenceDate() {
+  const lastClickDateStr = scriptProperties.getProperty('lastClickDate');
+  const startDateStr = scriptProperties.getProperty('startDate');
+  
+  if (lastClickDateStr) {
+    return new Date(lastClickDateStr);
+  } else if (startDateStr) {
+    return new Date(startDateStr);
+  } else {
+    return null; // Should only happen on the very first run
+  }
+}
+
+/**
+ * Sends the daily check-in email.
+ * Stops sending if > STOP_EMAILS_THRESHOLD_DAYS since last interaction (or start date).
  */
 function sendCheckInEmail() {
-  // Get the URL of the deployed web app
+  Logger.log("--- Running sendCheckInEmail...");
+
+  // 1. Initialize Start Date if it doesn't exist (First Run Logic)
+  let startDateStr = scriptProperties.getProperty('startDate');
+  if (!startDateStr) {
+    Logger.log("--- First run detected. Setting 'startDate'.");
+    scriptProperties.setProperty('startDate', new Date().toISOString());
+  }
+
+  // 2. Check Stop Rule
+  const referenceDate = getReferenceDate();
+  
+  if (referenceDate) {
+    const now = new Date();
+    const stopThresholdInMillis = STOP_EMAILS_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+    const timeDifference = now.getTime() - referenceDate.getTime();
+    const daysDiff = (timeDifference / (1000 * 60 * 60 * 24)).toFixed(1);
+
+    Logger.log(`--- Days since last activity: ${daysDiff}`);
+    
+    if (timeDifference > stopThresholdInMillis) {
+      Logger.log(`--- ${STOP_EMAILS_THRESHOLD_DAYS}-day threshold EXCEEDED. Stopping email.`);
+      return; // STOP HERE
+    }
+  }
+
+  // 3. Send the Email
   const webAppUrl = ScriptApp.getService().getUrl();
   if (!webAppUrl) {
-    Logger.log("--- ERROR: Script must be deployed as a Web App before running sendCheckInEmail.");
+    Logger.log("--- ERROR: Deploy as Web App first.");
     return;
   }
 
-  // HTML for the "YES" button
   const buttonHtml =
     "<div style='padding: 20px; text-align: center;'>" +
-    "<a href='" + webAppUrl + "' " +
-    "style='" +
-    "background-color: #4CAF50; " +
-    "color: white; " +
-    "padding: 15px 32px; " +
-    "text-align: center; " +
-    "text-decoration: none; " +
-    "display: inline-block; " +
-    "font-size: 16px; " +
-    "font-family: Arial, sans-serif; " +
-    "font-weight: bold; " +
-    "margin: 4px 2px; " +
-    "cursor: pointer; " +
-    "border: none; " +
-    "border-radius: 8px;'" +
-    ">" +
-    "CLICK 'YES' TO CHECK IN" +
-    "</a>" +
+    "<a href='" + webAppUrl + "' style='background-color: #4CAF50; color: white; padding: 15px 32px; text-decoration: none; border-radius: 8px;'>CLICK 'YES' TO CHECK IN</a>" +
     "</div>";
 
   const emailBody =
@@ -135,61 +151,48 @@ function sendCheckInEmail() {
       subject: PRIMARY_SUBJECT,
       htmlBody: emailBody
     });
-    Logger.log("--- Primary check-in email sent to " + PRIMARY_EMAIL);
+    Logger.log("--- Primary check-in email sent.");
   } catch (error) {
     Logger.log("--- ERROR sending primary email: " + error.message);
   }
 }
 
 /**
- * Checks if 7 days have passed since the last click.
- * If so, sends the alert email.
- * This function should be run on a daily time-based trigger,
- * preferably an hour or two after sendCheckInEmail.
+ * Checks for lapse based on ALERT_THRESHOLD_DAYS.
+ * Uses Start Date if no clicks have ever occurred.
  */
 function checkSevenDayLapse() {
-  Logger.log("--- Running 7-day lapse check...");
-  const lastClickDateStr = scriptProperties.getProperty('lastClickDate');
+  Logger.log("--- Running lapse check...");
   const alertSent = scriptProperties.getProperty('alertSent');
 
-  // If an alert has already been sent, do nothing until it's reset by a click.
   if (alertSent === 'true') {
     Logger.log("--- Alert already sent. No action taken.");
     return;
   }
 
-  // If there's no click date ever, send alert immediately (or after 7 days, policy choice)
-  // We'll be nice and wait 7 days from the first *email* instead.
-  // For now, if no click, we just log and wait.
-  if (!lastClickDateStr) {
-    Logger.log("--- No click has ever been recorded. No action taken.");
-    // We could also check when the script was FIRST run, but this is more complex.
-    // This logic assumes 7 days *after the last click*.
+  const referenceDate = getReferenceDate();
+  
+  if (!referenceDate) {
+    Logger.log("--- No reference date found (Script too new?). No action.");
     return;
   }
 
-  const lastClickDate = new Date(lastClickDateStr);
   const now = new Date();
-  const sevenDaysInMillis = 7 * 24 * 60 * 60 * 1000;
-  const timeDifference = now.getTime() - lastClickDate.getTime();
+  const alertThresholdInMillis = ALERT_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+  const timeDifference = now.getTime() - referenceDate.getTime();
+  const daysDiff = (timeDifference / (1000 * 60 * 60 * 24)).toFixed(1);
+  
+  Logger.log(`--- Days since last activity: ${daysDiff}`);
 
-  Logger.log("--- Last click: " + lastClickDate.toLocaleString());
-  Logger.log("--- Time since last click (ms): " + timeDifference);
-  Logger.log("--- 7 day threshold (ms): " + sevenDaysInMillis);
-
-  if (timeDifference > sevenDaysInMillis) {
-    Logger.log("--- 7-day threshold EXCEEDED. Sending alert.");
+  if (timeDifference > alertThresholdInMillis) {
+    Logger.log(`--- ${ALERT_THRESHOLD_DAYS}-day threshold EXCEEDED. Sending Alert.`);
+    scriptProperties.setProperty('alertSent', 'true'); // Set flag FIRST
     sendAlertEmail();
-    scriptProperties.setProperty('alertSent', 'true'); // Flag that we sent the alert
   } else {
-    Logger.log("--- Within 7-day window. No alert sent.");
+    Logger.log(`--- Within ${ALERT_THRESHOLD_DAYS}-day window. No alert sent.`);
   }
 }
 
-/**
- * Sends the alert email with the PDF attachment.
- * This is called by checkSevenDayLapse.
- */
 function sendAlertEmail() {
   try {
     const pdfFile = DriveApp.getFileById(PDF_FILE_ID);
@@ -198,26 +201,18 @@ function sendAlertEmail() {
     MailApp.sendEmail({
       to: SECONDARY_EMAIL,
       subject: SECONDARY_SUBJECT,
-      htmlBody: SECONDARY_BODY, // Use htmlBody for HTML content
+      htmlBody: SECONDARY_BODY,
       attachments: [pdfBlob]
     });
-    Logger.log("--- Alert email with PDF successfully sent to " + SECONDARY_EMAIL);
-
+    Logger.log("--- Alert sent to " + SECONDARY_EMAIL);
   } catch (error) {
-    Logger.log("--- ERROR sending alert email: " + error.message);
-    // Send a fallback email WITHOUT attachment, explaining the error
+    Logger.log("--- ERROR sending alert: " + error.message);
     try {
       MailApp.sendEmail({
         to: SECONDARY_EMAIL,
         subject: "SCRIPT ERROR: Failed to Send Alert",
-        htmlBody: "This is an automated error message.<br><br>" +
-                  "The script tried to send the 7-day alert, but it FAILED.<br>" +
-                  "The error was: " + error.message + "<br><br>" +
-                  "This usually happens if the PDF File ID is incorrect or the script does not have permission to access the file in Google Drive."
+        htmlBody: "Error: " + error.message
       });
-      Logger.log("--- Fallback error email sent to " + SECONDARY_EMAIL);
-    } catch (e) {
-      Logger.log("--- CRITICAL ERROR: Could not even send fallback email. " + e.message);
-    }
+    } catch(e) {}
   }
 }
